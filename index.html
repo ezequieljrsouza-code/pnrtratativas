@@ -427,9 +427,9 @@
         <div class="hint" id="cardTotalHint">0 ocorrências</div>
       </div>
       <div class="card">
-        <div class="label">Ticket Médio</div>
-        <div class="value" id="cardAvg">R$ 0,00</div>
-        <div class="hint">por ocorrência</div>
+        <div class="label">Qtd. PNR (Ocorrências)</div>
+        <div class="value" id="cardCount">0</div>
+        <div class="hint" id="cardCountHint">em aberto</div>
       </div>
       <div class="card blue">
         <div class="label">Maior Valor</div>
@@ -648,12 +648,12 @@ function renderCards(th, activeTp){
   const isFiltered = base.length !== rawData.length;
 
   const total = base.reduce((s,r)=>s+r['R$'],0);
-  const avg = base.length ? total/base.length : 0;
   const maxRow = base.slice().sort((a,b)=>b['R$']-a['R$'])[0];
 
   document.getElementById('cardTotal').textContent = formatBRL(total);
   document.getElementById('cardTotalHint').textContent = base.length + (isFiltered ? ' ocorrências filtradas (de ' + rawData.length + ')' : ' ocorrências no total');
-  document.getElementById('cardAvg').textContent = formatBRL(avg);
+  document.getElementById('cardCount').textContent = base.length;
+  document.getElementById('cardCountHint').textContent = isFiltered ? 'em aberto (filtrado de ' + rawData.length + ')' : 'em aberto';
   document.getElementById('cardMax').textContent = maxRow ? formatBRL(maxRow['R$']) : formatBRL(0);
   document.getElementById('cardMaxHint').textContent = maxRow ? ('ID ' + maxRow.ID + ' · ' + maxRow.TP) : '-';
 
