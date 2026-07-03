@@ -584,7 +584,7 @@ function applyFilters(){
   });
 
   sortData();
-  renderCards(th);
+  renderCards(th, tp);
   renderTable(th);
 }
 
@@ -602,24 +602,43 @@ function sortData(){
   });
 }
 
-function renderCards(th){
-  const total = rawData.reduce((s,r)=>s+r['R$'],0);
-  const avg = rawData.length ? total/rawData.length : 0;
-  const maxRow = rawData.slice().sort((a,b)=>b['R$']-a['R$'])[0];
+function renderCards(th, activeTp){
+  const base = filteredData;
+  const isFiltered = base.length !== rawData.length;
+
+  const total = base.reduce((s,r)=>s+r['R$'],0);
+  const avg = base.length ? total/base.length : 0;
+  const maxRow = base.slice().sort((a,b)=>b['R$']-a['R$'])[0];
 
   document.getElementById('cardTotal').textContent = formatBRL(total);
-  document.getElementById('cardTotalHint').textContent = rawData.length + ' ocorrências no total';
+  document.getElementById('cardTotalHint').textContent = base.length + (isFiltered ? ' ocorrências filtradas (de ' + rawData.length + ')' : ' ocorrências no total');
   document.getElementById('cardAvg').textContent = formatBRL(avg);
   document.getElementById('cardMax').textContent = maxRow ? formatBRL(maxRow['R$']) : formatBRL(0);
   document.getElementById('cardMaxHint').textContent = maxRow ? ('ID ' + maxRow.ID + ' · ' + maxRow.TP) : '-';
 
-  // transportadora com maior soma
+  // Card de transportadora: se um TP específico estiver no filtro, mostra os dados dele.
+  // Caso contrário, mostra a transportadora com maior valor dentro do conjunto filtrado.
+  const cardTopTpLabelEl = document.querySelector('.card.green .label');
   const byTp = {};
-  rawData.forEach(r=>{ byTp[r.TP] = (byTp[r.TP]||0) + r['R$']; });
-  let topTp = null, topVal = -1;
-  Object.keys(byTp).forEach(k=>{ if(byTp[k] > topVal){ topVal = byTp[k]; topTp = k; } });
-  document.getElementById('cardTopTp').textContent = topTp || '-';
-  document.getElementById('cardTopTpHint').textContent = topTp ? (formatBRL(topVal) + ' em aberto') : '-';
+  const countTp = {};
+  base.forEach(r=>{
+    byTp[r.TP] = (byTp[r.TP]||0) + r['R$'];
+    countTp[r.TP] = (countTp[r.TP]||0) + 1;
+  });
+
+  if(activeTp){
+    cardTopTpLabelEl.textContent = 'Transportadora (filtro)';
+    document.getElementById('cardTopTp').textContent = activeTp;
+    const val = byTp[activeTp] || 0;
+    const cnt = countTp[activeTp] || 0;
+    document.getElementById('cardTopTpHint').textContent = formatBRL(val) + ' em ' + cnt + ' ocorrência' + (cnt===1?'':'s');
+  } else {
+    cardTopTpLabelEl.textContent = 'Transportadora Crítica';
+    let topTp = null, topVal = -1;
+    Object.keys(byTp).forEach(k=>{ if(byTp[k] > topVal){ topVal = byTp[k]; topTp = k; } });
+    document.getElementById('cardTopTp').textContent = topTp || '-';
+    document.getElementById('cardTopTpHint').textContent = topTp ? (formatBRL(topVal) + ' em aberto') : '-';
+  }
 }
 
 function renderTable(th){
