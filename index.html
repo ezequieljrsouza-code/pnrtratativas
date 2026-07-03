@@ -658,9 +658,9 @@ function renderTable(th){
 
       let rankBadge = `<span class="rank-badge">${idx+1}</span>`;
       if(sortKey === 'R$' && sortDir === 'desc'){
-        if(idx===0) rankBadge = `<span class="rank-badge top1">🥇</span>`;
-        else if(idx===1) rankBadge = `<span class="rank-badge top2">🥈</span>`;
-        else if(idx===2) rankBadge = `<span class="rank-badge top3">🥉</span>`;
+        if(idx===0) rankBadge = `<span class="rank-badge top1" title="Maior ofensor">🚨</span>`;
+        else if(idx===1) rankBadge = `<span class="rank-badge top2" title="2º maior ofensor">⚠️</span>`;
+        else if(idx===2) rankBadge = `<span class="rank-badge top3" title="3º maior ofensor">❗</span>`;
       }
 
       return `<tr class="${rowClass}">
