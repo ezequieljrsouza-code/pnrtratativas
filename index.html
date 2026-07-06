@@ -104,6 +104,93 @@
     white-space:nowrap;
   }
 
+  @media print{
+    .no-print{ display:none !important; }
+  }
+
+  /* ---------- TABS ---------- */
+  .tabs{
+    display:flex;
+    gap:4px;
+    margin-bottom:16px;
+    border-bottom:2px solid var(--ml-gray-border);
+  }
+  .tab-btn{
+    background:none;
+    border:none;
+    padding:12px 20px;
+    font-size:14px;
+    font-weight:700;
+    color:#767676;
+    cursor:pointer;
+    border-bottom:3px solid transparent;
+    margin-bottom:-2px;
+    transition:color .12s ease, border-color .12s ease;
+  }
+  .tab-btn:hover{color:var(--ml-dark);}
+  .tab-btn.active{
+    color:var(--ml-dark);
+    border-bottom-color:var(--ml-yellow-dark);
+  }
+
+  /* ---------- HISTORY ---------- */
+  .history-toolbar{
+    background:var(--white);
+    border-radius:8px;
+    padding:16px 20px;
+    margin-bottom:16px;
+    display:flex;
+    gap:16px;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  .history-toolbar-text{
+    font-size:12.5px;
+    color:#767676;
+    max-width:640px;
+    line-height:1.5;
+  }
+  .history-toolbar-text strong{color:var(--ml-dark);}
+  .history-actions{
+    display:flex;
+    gap:10px;
+    flex-shrink:0;
+  }
+  .history-empty{
+    background:var(--white);
+    border-radius:10px;
+    padding:60px 24px;
+    text-align:center;
+    border:2px dashed #cfcfcf;
+    color:#767676;
+    font-size:14px;
+  }
+  .chart-card{
+    background:var(--white);
+    border-radius:8px;
+    padding:20px;
+    margin-bottom:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  .snapshot-badge{
+    background:var(--ml-yellow);
+    color:var(--ml-dark);
+    font-weight:800;
+    font-size:11px;
+    padding:2px 8px;
+    border-radius:10px;
+  }
+  .history-delete{
+    background:none;
+    border:none;
+    color:#bbb;
+    cursor:pointer;
+    font-size:15px;
+  }
+  .history-delete:hover{color:var(--ml-red);}
+
   main{
     max-width:1400px;
     margin:0 auto;
@@ -421,6 +508,12 @@
 
   <div id="dashboard" style="display:none;">
 
+    <div class="tabs">
+      <button class="tab-btn active" id="tabBtnPainel" onclick="switchTab('painel')">&#128202; Painel</button>
+      <button class="tab-btn" id="tabBtnHistorico" onclick="switchTab('historico')">&#128197; Histórico</button>
+    </div>
+
+    <div id="painelView">
     <div class="cards">
       <div class="card red">
         <div class="label">Total em Aberto</div>
@@ -506,14 +599,67 @@
       </div>
     </div>
 
+    </div><!-- /painelView -->
+
+    <div id="historicoView" style="display:none;">
+
+      <div class="history-toolbar">
+        <div class="history-toolbar-text">
+          <strong>Como funciona:</strong> toda vez que você carrega uma base (CSV/Excel), um snapshot é registrado aqui com data/hora, quantidade e valor total em aberto — assim dá para ver a evolução das tratativas. O histórico fica salvo apenas nesta sessão do navegador; baixe o histórico para não perder e importe-o de volta na próxima vez para continuar a linha do tempo.
+        </div>
+        <div class="history-actions">
+          <button class="clear-btn" id="importHistoryBtn">&#128194; Importar histórico</button>
+          <input type="file" id="historyFileInput" accept=".csv" style="display:none;">
+          <button class="download-btn" id="exportHistoryBtn">&#11015;&#65039; Baixar histórico</button>
+        </div>
+      </div>
+
+      <div id="historyEmpty" class="history-empty">
+        Nenhum snapshot registrado ainda. Carregue uma base para começar o histórico, ou importe um histórico salvo anteriormente.
+      </div>
+
+      <div id="historyContent" style="display:none;">
+        <div class="chart-card">
+          <canvas id="historyChart" height="90"></canvas>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-toolbar">
+            <span class="table-toolbar-title">Snapshots</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Data / Hora</th>
+                <th>Arquivo</th>
+                <th>Qtd. PNR</th>
+                <th>Valor Total (R$)</th>
+                <th>Ticket Médio</th>
+                <th>Maior Valor</th>
+                <th>Transportadora Líder</th>
+                <th style="width:36px;"></th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /historicoView -->
+
   </div>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script>
 let rawData = [];
 let filteredData = [];
 let sortKey = 'R$';
 let sortDir = 'desc';
+let historyData = [];
+let historyChartInstance = null;
+let currentTab = 'painel';
+let currentFileName = '';
 
 const fileInput = document.getElementById('fileInput');
 const fileNameEl = document.getElementById('fileName');
@@ -524,6 +670,7 @@ fileInput.addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
   fileNameEl.textContent = file.name;
+  currentFileName = file.name;
   const ext = file.name.split('.').pop().toLowerCase();
 
   if(ext === 'csv'){
@@ -634,6 +781,7 @@ function processData(rows, facilityMap){
 
   populateFilters();
   applyFilters();
+  registerSnapshot(currentFileName);
 }
 
 function populateFilters(){
@@ -882,6 +1030,220 @@ document.querySelectorAll('thead th').forEach(function(th){
     th.appendChild(arrow);
     applyFilters();
   });
+});
+
+/* ---------------- TABS ---------------- */
+function switchTab(tab){
+  currentTab = tab;
+  document.getElementById('painelView').style.display = tab === 'painel' ? 'block' : 'none';
+  document.getElementById('historicoView').style.display = tab === 'historico' ? 'block' : 'none';
+  document.getElementById('tabBtnPainel').classList.toggle('active', tab === 'painel');
+  document.getElementById('tabBtnHistorico').classList.toggle('active', tab === 'historico');
+  if(tab === 'historico'){
+    renderHistory();
+  }
+}
+
+/* ---------------- HISTÓRICO ---------------- */
+function registerSnapshot(fileName){
+  const total = rawData.reduce((s,r)=>s+r['R$'],0);
+  const count = rawData.length;
+  const avg = count ? total/count : 0;
+  const maxRow = rawData.slice().sort((a,b)=>b['R$']-a['R$'])[0];
+
+  const byTp = {};
+  rawData.forEach(r=>{ byTp[r.TP] = (byTp[r.TP]||0) + r['R$']; });
+  let topTp = null, topVal = -1;
+  Object.keys(byTp).forEach(k=>{ if(byTp[k] > topVal){ topVal = byTp[k]; topTp = k; } });
+
+  const snapshot = {
+    timestamp: new Date().toISOString(),
+    file: fileName || '-',
+    count: count,
+    total: total,
+    avg: avg,
+    max: maxRow ? maxRow['R$'] : 0,
+    topTp: topTp || '-'
+  };
+
+  historyData.push(snapshot);
+  if(currentTab === 'historico') renderHistory();
+}
+
+function formatDateTimeBR(iso){
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return iso;
+  return d.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
+function renderHistory(){
+  const emptyEl = document.getElementById('historyEmpty');
+  const contentEl = document.getElementById('historyContent');
+
+  if(historyData.length === 0){
+    emptyEl.style.display = 'block';
+    contentEl.style.display = 'none';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'block';
+
+  const sorted = historyData.slice().sort((a,b)=> new Date(a.timestamp) - new Date(b.timestamp));
+
+  // Tabela
+  const tbody = document.getElementById('historyTableBody');
+  tbody.innerHTML = sorted.slice().reverse().map(function(s, revIdx){
+    const idx = sorted.length - 1 - revIdx;
+    return `<tr>
+      <td>${formatDateTimeBR(s.timestamp)}</td>
+      <td>${escapeHtml(s.file)}</td>
+      <td>${s.count}</td>
+      <td>${formatBRL(s.total)}</td>
+      <td>${formatBRL(s.avg)}</td>
+      <td>${formatBRL(s.max)}</td>
+      <td><span class="badge">${escapeHtml(s.topTp)}</span></td>
+      <td><button class="history-delete" title="Remover snapshot" onclick="removeSnapshot(${idx})">&times;</button></td>
+    </tr>`;
+  }).join('');
+
+  // Gráfico
+  const labels = sorted.map(s => formatDateTimeBR(s.timestamp));
+  const totals = sorted.map(s => s.total);
+  const counts = sorted.map(s => s.count);
+
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  if(historyChartInstance){
+    historyChartInstance.destroy();
+  }
+  historyChartInstance = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: labels,
+      datasets:[
+        {
+          label:'Valor Total (R$)',
+          data: totals,
+          borderColor:'#E5352B',
+          backgroundColor:'rgba(229,53,43,.08)',
+          yAxisID:'y',
+          tension:.25,
+          fill:true,
+          pointRadius:4,
+          pointBackgroundColor:'#E5352B'
+        },
+        {
+          label:'Qtd. PNR',
+          data: counts,
+          borderColor:'#3483FA',
+          backgroundColor:'rgba(52,131,250,.08)',
+          yAxisID:'y1',
+          tension:.25,
+          fill:false,
+          pointRadius:4,
+          pointBackgroundColor:'#3483FA'
+        }
+      ]
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{position:'top', labels:{font:{weight:'bold'}}}
+      },
+      scales:{
+        y:{
+          type:'linear',
+          position:'left',
+          title:{display:true, text:'Valor Total (R$)'},
+          ticks:{ callback: v => 'R$ ' + Number(v).toLocaleString('pt-BR') }
+        },
+        y1:{
+          type:'linear',
+          position:'right',
+          title:{display:true, text:'Qtd. PNR'},
+          grid:{drawOnChartArea:false},
+          ticks:{ precision:0 }
+        }
+      }
+    }
+  });
+}
+
+function removeSnapshot(idx){
+  const sorted = historyData.slice().sort((a,b)=> new Date(a.timestamp) - new Date(b.timestamp));
+  const target = sorted[idx];
+  historyData = historyData.filter(s => s !== target);
+  renderHistory();
+}
+
+function exportHistoryCsv(){
+  if(historyData.length === 0) return;
+  const rows = historyData.map(function(s){
+    return {
+      TIMESTAMP: s.timestamp,
+      ARQUIVO: s.file,
+      QTD_PNR: s.count,
+      VALOR_TOTAL: s.total.toFixed(2).replace('.', ','),
+      TICKET_MEDIO: s.avg.toFixed(2).replace('.', ','),
+      MAIOR_VALOR: s.max.toFixed(2).replace('.', ','),
+      TRANSPORTADORA_LIDER: s.topTp
+    };
+  });
+  const csv = Papa.unparse(rows, {delimiter:';'});
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().slice(0,10);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'historico_pnr_' + stamp + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function importHistoryCsv(file){
+  Papa.parse(file, {
+    header:true,
+    skipEmptyLines:true,
+    complete:function(results){
+      let added = 0;
+      results.data.forEach(function(row){
+        if(!row.TIMESTAMP) return;
+        const parsedTotal = parseFloat(String(row.VALOR_TOTAL||'0').replace(',', '.')) || 0;
+        const parsedAvg = parseFloat(String(row.TICKET_MEDIO||'0').replace(',', '.')) || 0;
+        const parsedMax = parseFloat(String(row.MAIOR_VALOR||'0').replace(',', '.')) || 0;
+        const exists = historyData.some(h => h.timestamp === row.TIMESTAMP);
+        if(!exists){
+          historyData.push({
+            timestamp: row.TIMESTAMP,
+            file: row.ARQUIVO || '-',
+            count: parseInt(row.QTD_PNR) || 0,
+            total: parsedTotal,
+            avg: parsedAvg,
+            max: parsedMax,
+            topTp: row.TRANSPORTADORA_LIDER || '-'
+          });
+          added++;
+        }
+      });
+      renderHistory();
+      alert(added + ' snapshot(s) importado(s) com sucesso.');
+    },
+    error:function(err){
+      alert('Erro ao importar histórico: ' + err);
+    }
+  });
+}
+
+document.getElementById('exportHistoryBtn').addEventListener('click', exportHistoryCsv);
+document.getElementById('importHistoryBtn').addEventListener('click', function(){
+  document.getElementById('historyFileInput').click();
+});
+document.getElementById('historyFileInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(file) importHistoryCsv(file);
+  e.target.value = '';
 });
 </script>
 
