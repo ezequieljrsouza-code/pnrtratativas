@@ -840,9 +840,17 @@ function downloadFilteredCsv(){
   const now = new Date();
   const stamp = now.toISOString().slice(0,10);
 
+  const tpFilter = document.getElementById('filterTp').value;
+  const tpSlug = tpFilter
+    ? '_' + tpFilter.trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+    : '';
+
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'tratativas_pnr_' + stamp + '.csv';
+  a.download = 'tratativas_pnr' + tpSlug + '_' + stamp + '.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
