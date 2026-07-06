@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tratativas de PNR</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ml-yellow:#FFE600;
@@ -402,9 +403,9 @@
     <div class="upload-wrap">
       <span class="file-name" id="fileName"></span>
       <button class="file-btn" onclick="document.getElementById('fileInput').click()">
-        &#128193; Carregar CSV
+        &#128193; Carregar CSV/Excel
       </button>
-      <input type="file" id="fileInput" accept=".csv">
+      <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
     </div>
   </div>
 </header>
@@ -414,8 +415,8 @@
   <div id="emptyState">
     <div class="icon">&#128202;</div>
     <h2>Nenhum arquivo carregado</h2>
-    <p>Envie o CSV de PNR (SVC, ROUTE_ID, ID, DATA_REC, DATA_ENT, DESC, R$, TP) para gerar o painel automaticamente.</p>
-    <button class="file-btn" onclick="document.getElementById('fileInput').click()">&#128193; Selecionar arquivo CSV</button>
+    <p>Envie o CSV ou Excel de PNR (SVC, ROUTE_ID, ID, DATA_REC, DATA_ENT, DESC, R$, TP). Se o arquivo Excel tiver a guia "FACILITY", o painel já traz o facility de cada ID automaticamente.</p>
+    <button class="file-btn" onclick="document.getElementById('fileInput').click()">&#128193; Selecionar arquivo</button>
   </div>
 
   <div id="dashboard" style="display:none;">
@@ -457,6 +458,10 @@
         <select id="filterSvc"><option value="">Todos</option></select>
       </div>
       <div class="control-group">
+        <label>Facility</label>
+        <select id="filterFacility"><option value="">Todos</option></select>
+      </div>
+      <div class="control-group">
         <label>Prioridade</label>
         <select id="filterPriority">
           <option value="">Todas</option>
@@ -490,6 +495,7 @@
             <th data-key="DESC">Descrição</th>
             <th data-key="R$">Valor (R$) <span class="arrow">▼</span></th>
             <th data-key="TP">Transportadora</th>
+            <th data-key="FACILITY">Facility</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -518,19 +524,73 @@ fileInput.addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
   fileNameEl.textContent = file.name;
-  Papa.parse(file, {
-    header:true,
-    skipEmptyLines:true,
-    dynamicTyping:false,
-    encoding:"UTF-8",
-    complete:function(results){
-      processData(results.data);
-    },
-    error:function(err){
-      alert('Erro ao ler o arquivo CSV: ' + err);
-    }
-  });
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if(ext === 'csv'){
+    Papa.parse(file, {
+      header:true,
+      skipEmptyLines:true,
+      dynamicTyping:false,
+      encoding:"UTF-8",
+      complete:function(results){
+        processData(results.data, {});
+      },
+      error:function(err){
+        alert('Erro ao ler o arquivo CSV: ' + err);
+      }
+    });
+  } else if(ext === 'xlsx' || ext === 'xls'){
+    const reader = new FileReader();
+    reader.onload = function(evt){
+      try{
+        const wb = XLSX.read(evt.target.result, {type:'array'});
+        let mainRows = [];
+        let facilityMap = {};
+
+        wb.SheetNames.forEach(function(name){
+          const ws = wb.Sheets[name];
+          const json = XLSX.utils.sheet_to_json(ws, {defval:''});
+          if(!json.length) return;
+          const headers = Object.keys(json[0]).map(h=>h.toString().trim().toUpperCase());
+
+          if(headers.indexOf('FACILITY') !== -1 && headers.indexOf('ID') !== -1){
+            json.forEach(function(row){
+              const idKey = Object.keys(row).find(k=>k.toString().trim().toUpperCase()==='ID');
+              const facKey = Object.keys(row).find(k=>k.toString().trim().toUpperCase()==='FACILITY');
+              const idNorm = normalizeId(row[idKey]);
+              if(idNorm && row[facKey] !== ''){
+                facilityMap[idNorm] = String(row[facKey]).trim();
+              }
+            });
+          } else if(headers.indexOf('R$') !== -1 || (headers.indexOf('DESC') !== -1 && headers.indexOf('ID') !== -1)){
+            mainRows = mainRows.concat(json);
+          }
+        });
+
+        if(mainRows.length === 0){
+          alert('Não foi possível localizar a guia com os dados principais (SVC, ROUTE_ID, ID, DESC, R$, TP) no arquivo Excel.');
+          return;
+        }
+        processData(mainRows, facilityMap);
+      } catch(err){
+        alert('Erro ao ler o arquivo Excel: ' + err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    alert('Formato não suportado. Envie um arquivo .csv, .xlsx ou .xls.');
+  }
 });
+
+function normalizeId(v){
+  if(v===undefined || v===null || v==='') return '';
+  const s = String(v).trim();
+  const n = Number(s);
+  if(!isNaN(n) && s !== ''){
+    return String(Math.round(n));
+  }
+  return s;
+}
 
 function parseValor(v){
   if(v===undefined || v===null || v==='') return 0;
@@ -545,22 +605,27 @@ function parseValor(v){
   return isNaN(n) ? 0 : n;
 }
 
-function processData(rows){
+function processData(rows, facilityMap){
+  facilityMap = facilityMap || {};
   rawData = rows.map(function(r){
+    const idRaw = (r.ID!==undefined ? r.ID : '');
+    const idStr = String(idRaw).trim();
+    const idNorm = normalizeId(idRaw);
     return {
-      SVC: (r.SVC||'').trim(),
-      ROUTE_ID: (r.ROUTE_ID||'').trim(),
-      ID: (r.ID||'').trim(),
-      DATA_REC: (r.DATA_REC||'').trim(),
-      DATA_ENT: (r.DATA_ENT||'').trim(),
-      DESC: (r.DESC||'').trim(),
+      SVC: (r.SVC||'').toString().trim(),
+      ROUTE_ID: (r.ROUTE_ID||'').toString().trim(),
+      ID: idStr,
+      DATA_REC: (r.DATA_REC||'').toString().trim(),
+      DATA_ENT: (r.DATA_ENT||'').toString().trim(),
+      DESC: (r.DESC||'').toString().trim(),
       'R$': parseValor(r['R$']),
-      TP: (r.TP||'').trim()
+      TP: (r.TP||'').toString().trim(),
+      FACILITY: facilityMap[idNorm] || ''
     };
   }).filter(function(r){ return r.ID !== ''; });
 
   if(rawData.length === 0){
-    alert('Não foi possível identificar registros válidos no CSV. Verifique as colunas: SVC, ROUTE_ID, ID, DATA_REC, DATA_ENT, DESC, R$, TP.');
+    alert('Não foi possível identificar registros válidos no arquivo. Verifique as colunas: SVC, ROUTE_ID, ID, DATA_REC, DATA_ENT, DESC, R$, TP.');
     return;
   }
 
@@ -574,12 +639,16 @@ function processData(rows){
 function populateFilters(){
   const tpSet = Array.from(new Set(rawData.map(r=>r.TP))).filter(Boolean).sort();
   const svcSet = Array.from(new Set(rawData.map(r=>r.SVC))).filter(Boolean).sort();
+  const facSet = Array.from(new Set(rawData.map(r=>r.FACILITY))).filter(Boolean).sort();
 
   const tpSelect = document.getElementById('filterTp');
   tpSelect.innerHTML = '<option value="">Todas</option>' + tpSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
 
   const svcSelect = document.getElementById('filterSvc');
   svcSelect.innerHTML = '<option value="">Todos</option>' + svcSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+
+  const facSelect = document.getElementById('filterFacility');
+  facSelect.innerHTML = '<option value="">Todos</option>' + facSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
 }
 
 function getThresholds(){
@@ -610,15 +679,17 @@ function applyFilters(){
   const search = document.getElementById('searchInput').value.toLowerCase().trim();
   const tp = document.getElementById('filterTp').value;
   const svc = document.getElementById('filterSvc').value;
+  const facility = document.getElementById('filterFacility').value;
   const priority = document.getElementById('filterPriority').value;
   const th = getThresholds();
 
   filteredData = rawData.filter(function(r){
     if(tp && r.TP !== tp) return false;
     if(svc && r.SVC !== svc) return false;
+    if(facility && r.FACILITY !== facility) return false;
     if(priority && priorityOf(r['R$'], th) !== priority) return false;
     if(search){
-      const hay = (r.ID + ' ' + r.ROUTE_ID + ' ' + r.DESC + ' ' + r.TP).toLowerCase();
+      const hay = (r.ID + ' ' + r.ROUTE_ID + ' ' + r.DESC + ' ' + r.TP + ' ' + r.FACILITY).toLowerCase();
       if(hay.indexOf(search) === -1) return false;
     }
     return true;
@@ -687,7 +758,7 @@ function renderTable(th){
   const maxVal = Math.max.apply(null, rawData.map(r=>r['R$'])) || 1;
 
   if(filteredData.length === 0){
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#999;">Nenhum registro encontrado para os filtros selecionados.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:#999;">Nenhum registro encontrado para os filtros selecionados.</td></tr>';
   } else {
     tbody.innerHTML = filteredData.map(function(r, idx){
       const pr = priorityOf(r['R$'], th);
@@ -720,6 +791,7 @@ function renderTable(th){
           </div>
         </td>
         <td><span class="badge">${escapeHtml(r.TP)}</span></td>
+        <td>${r.FACILITY ? '<span class="badge svc">'+escapeHtml(r.FACILITY)+'</span>' : '<span style="color:#bbb;">-</span>'}</td>
       </tr>`;
     }).join('');
   }
@@ -735,6 +807,7 @@ function clearFilters(){
   document.getElementById('searchInput').value = '';
   document.getElementById('filterTp').value = '';
   document.getElementById('filterSvc').value = '';
+  document.getElementById('filterFacility').value = '';
   document.getElementById('filterPriority').value = '';
   applyFilters();
 }
@@ -755,6 +828,7 @@ function downloadFilteredCsv(){
       'DESC': r.DESC,
       'R$': r['R$'].toFixed(2).replace('.', ','),
       'TP': r.TP,
+      'FACILITY': r.FACILITY,
       'PRIORIDADE': priorityLabel[priorityOf(r['R$'], th)]
     };
   });
@@ -780,6 +854,7 @@ document.getElementById('downloadBtn').addEventListener('click', downloadFiltere
 document.getElementById('searchInput').addEventListener('input', applyFilters);
 document.getElementById('filterTp').addEventListener('change', applyFilters);
 document.getElementById('filterSvc').addEventListener('change', applyFilters);
+document.getElementById('filterFacility').addEventListener('change', applyFilters);
 document.getElementById('filterPriority').addEventListener('change', applyFilters);
 
 document.querySelectorAll('thead th').forEach(function(th){
