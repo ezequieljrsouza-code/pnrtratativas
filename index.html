@@ -103,6 +103,12 @@
     text-overflow:ellipsis;
     white-space:nowrap;
   }
+  .cloud-status{
+    font-size:11px;
+    font-weight:700;
+    color:#00A650;
+    white-space:nowrap;
+  }
 
   @media print{
     .no-print{ display:none !important; }
@@ -488,6 +494,7 @@
       </div>
     </div>
     <div class="upload-wrap">
+      <span class="cloud-status" id="cloudStatus">☁️ Conectando...</span>
       <span class="file-name" id="fileName"></span>
       <button class="file-btn" onclick="document.getElementById('fileInput').click()">
         &#128193; Carregar CSV/Excel
@@ -623,6 +630,11 @@
           <canvas id="historyChart" height="90"></canvas>
         </div>
 
+        <div class="chart-card">
+          <div class="table-toolbar-title" style="margin-bottom:12px;">Evolução por Transportadora</div>
+          <canvas id="historyTpChart" height="100"></canvas>
+        </div>
+
         <div class="table-wrap">
           <div class="table-toolbar">
             <span class="table-toolbar-title">Snapshots</span>
@@ -652,12 +664,15 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script>
+const FIREBASE_BASE = 'https://tratativaspnr-default-rtdb.firebaseio.com';
+
 let rawData = [];
 let filteredData = [];
 let sortKey = 'R$';
 let sortDir = 'desc';
 let historyData = [];
 let historyChartInstance = null;
+let historyTpChartInstance = null;
 let currentTab = 'painel';
 let currentFileName = '';
 
@@ -665,6 +680,127 @@ const fileInput = document.getElementById('fileInput');
 const fileNameEl = document.getElementById('fileName');
 const emptyState = document.getElementById('emptyState');
 const dashboard = document.getElementById('dashboard');
+
+/* ---------------- FIREBASE (Realtime Database via REST) ---------------- */
+function setCloudStatus(msg, isError){
+  const el = document.getElementById('cloudStatus');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? '#E5352B' : '#00A650';
+}
+
+async function fbGet(path){
+  const res = await fetch(`${FIREBASE_BASE}/${path}.json`);
+  if(!res.ok) throw new Error('GET ' + path + ' falhou (' + res.status + ')');
+  return res.json();
+}
+async function fbPut(path, data){
+  const res = await fetch(`${FIREBASE_BASE}/${path}.json`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if(!res.ok) throw new Error('PUT ' + path + ' falhou (' + res.status + ')');
+  return res.json();
+}
+async function fbPost(path, data){
+  const res = await fetch(`${FIREBASE_BASE}/${path}.json`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if(!res.ok) throw new Error('POST ' + path + ' falhou (' + res.status + ')');
+  return res.json();
+}
+async function fbDelete(path){
+  const res = await fetch(`${FIREBASE_BASE}/${path}.json`, {method:'DELETE'});
+  if(!res.ok) throw new Error('DELETE ' + path + ' falhou (' + res.status + ')');
+  return res.json();
+}
+
+async function saveSnapshotToCloud(snapshot){
+  try{
+    setCloudStatus('☁️ Salvando snapshot...', false);
+    const clean = Object.assign({}, snapshot);
+    delete clean._fbKey;
+    const result = await fbPost('history', clean);
+    if(result && result.name){
+      snapshot._fbKey = result.name;
+    }
+    setCloudStatus('☁️ Histórico salvo na nuvem', false);
+  } catch(err){
+    console.error(err);
+    setCloudStatus('⚠️ Falha ao salvar histórico na nuvem', true);
+  }
+}
+
+async function deleteSnapshotFromCloud(fbKey){
+  if(!fbKey) return;
+  try{
+    await fbDelete('history/' + fbKey);
+  } catch(err){
+    console.error(err);
+  }
+}
+
+async function savePainelToCloud(fileName, facilityAvailable){
+  try{
+    setCloudStatus('☁️ Salvando painel na nuvem...', false);
+    await fbPut('painel/rows', rawData);
+    await fbPut('painel/meta', {
+      fileName: fileName || '',
+      updatedAt: new Date().toISOString(),
+      count: rawData.length
+    });
+    setCloudStatus('☁️ Painel salvo na nuvem', false);
+  } catch(err){
+    console.error(err);
+    setCloudStatus('⚠️ Falha ao salvar painel na nuvem', true);
+  }
+}
+
+async function loadCloudDataOnStart(){
+  // Histórico
+  try{
+    setCloudStatus('☁️ Sincronizando histórico...', false);
+    const remoteHistory = await fbGet('history');
+    if(remoteHistory){
+      historyData = Object.keys(remoteHistory).map(function(key){
+        const s = remoteHistory[key];
+        s._fbKey = key;
+        return s;
+      });
+    }
+    setCloudStatus('☁️ Histórico sincronizado', false);
+  } catch(err){
+    console.error(err);
+    setCloudStatus('⚠️ Não foi possível carregar histórico da nuvem', true);
+  }
+
+  // Painel (última base carregada, de qualquer dispositivo)
+  try{
+    const remoteRows = await fbGet('painel/rows');
+    const remoteMeta = await fbGet('painel/meta');
+    if(remoteRows && Array.isArray(remoteRows) && remoteRows.length > 0 && rawData.length === 0){
+      rawData = remoteRows;
+      currentFileName = (remoteMeta && remoteMeta.fileName) || '';
+      if(currentFileName) fileNameEl.textContent = currentFileName + ' (nuvem)';
+      emptyState.style.display = 'none';
+      dashboard.style.display = 'block';
+      populateFilters();
+      applyFilters();
+      setCloudStatus('☁️ Painel carregado da nuvem', false);
+    }
+  } catch(err){
+    console.error(err);
+  }
+
+  if(historyData.length > 0 && currentTab === 'historico'){
+    renderHistory();
+  }
+}
+
+loadCloudDataOnStart();
 
 fileInput.addEventListener('change', function(e){
   const file = e.target.files[0];
@@ -782,6 +918,7 @@ function processData(rows, facilityMap){
   populateFilters();
   applyFilters();
   registerSnapshot(currentFileName);
+  savePainelToCloud(currentFileName);
 }
 
 function populateFilters(){
@@ -1052,7 +1189,11 @@ function registerSnapshot(fileName){
   const maxRow = rawData.slice().sort((a,b)=>b['R$']-a['R$'])[0];
 
   const byTp = {};
-  rawData.forEach(r=>{ byTp[r.TP] = (byTp[r.TP]||0) + r['R$']; });
+  const byTpCount = {};
+  rawData.forEach(r=>{
+    byTp[r.TP] = (byTp[r.TP]||0) + r['R$'];
+    byTpCount[r.TP] = (byTpCount[r.TP]||0) + 1;
+  });
   let topTp = null, topVal = -1;
   Object.keys(byTp).forEach(k=>{ if(byTp[k] > topVal){ topVal = byTp[k]; topTp = k; } });
 
@@ -1063,10 +1204,13 @@ function registerSnapshot(fileName){
     total: total,
     avg: avg,
     max: maxRow ? maxRow['R$'] : 0,
-    topTp: topTp || '-'
+    topTp: topTp || '-',
+    tpBreakdown: byTp,
+    tpCountBreakdown: byTpCount
   };
 
   historyData.push(snapshot);
+  saveSnapshotToCloud(snapshot);
   if(currentTab === 'historico') renderHistory();
 }
 
@@ -1167,11 +1311,58 @@ function renderHistory(){
       }
     }
   });
+
+  // Gráfico por transportadora
+  const allTps = Array.from(new Set(
+    sorted.flatMap(s => Object.keys(s.tpBreakdown || {}))
+  )).filter(Boolean).sort();
+
+  const tpColors = [
+    '#E5352B','#3483FA','#00A650','#FF7733','#FFD100',
+    '#8E44AD','#16A085','#D35400','#2C3E50','#C0392B',
+    '#2980B9','#27AE60'
+  ];
+
+  const tpDatasets = allTps.map(function(tp, i){
+    return {
+      label: tp,
+      data: sorted.map(s => (s.tpBreakdown && s.tpBreakdown[tp] !== undefined) ? s.tpBreakdown[tp] : null),
+      borderColor: tpColors[i % tpColors.length],
+      backgroundColor: tpColors[i % tpColors.length],
+      tension:.25,
+      fill:false,
+      spanGaps:true,
+      pointRadius:3
+    };
+  });
+
+  const ctxTp = document.getElementById('historyTpChart').getContext('2d');
+  if(historyTpChartInstance){
+    historyTpChartInstance.destroy();
+  }
+  historyTpChartInstance = new Chart(ctxTp, {
+    type:'line',
+    data:{ labels: labels, datasets: tpDatasets },
+    options:{
+      responsive:true,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{position:'top', labels:{font:{weight:'bold'}, boxWidth:12}}
+      },
+      scales:{
+        y:{
+          title:{display:true, text:'Valor em Aberto (R$)'},
+          ticks:{ callback: v => 'R$ ' + Number(v).toLocaleString('pt-BR') }
+        }
+      }
+    }
+  });
 }
 
 function removeSnapshot(idx){
   const sorted = historyData.slice().sort((a,b)=> new Date(a.timestamp) - new Date(b.timestamp));
   const target = sorted[idx];
+  deleteSnapshotFromCloud(target._fbKey);
   historyData = historyData.filter(s => s !== target);
   renderHistory();
 }
@@ -1186,7 +1377,9 @@ function exportHistoryCsv(){
       VALOR_TOTAL: s.total.toFixed(2).replace('.', ','),
       TICKET_MEDIO: s.avg.toFixed(2).replace('.', ','),
       MAIOR_VALOR: s.max.toFixed(2).replace('.', ','),
-      TRANSPORTADORA_LIDER: s.topTp
+      TRANSPORTADORA_LIDER: s.topTp,
+      TP_BREAKDOWN_JSON: JSON.stringify(s.tpBreakdown || {}),
+      TP_COUNT_BREAKDOWN_JSON: JSON.stringify(s.tpCountBreakdown || {})
     };
   });
   const csv = Papa.unparse(rows, {delimiter:';'});
@@ -1213,17 +1406,25 @@ function importHistoryCsv(file){
         const parsedTotal = parseFloat(String(row.VALOR_TOTAL||'0').replace(',', '.')) || 0;
         const parsedAvg = parseFloat(String(row.TICKET_MEDIO||'0').replace(',', '.')) || 0;
         const parsedMax = parseFloat(String(row.MAIOR_VALOR||'0').replace(',', '.')) || 0;
+        let tpBreakdown = {};
+        let tpCountBreakdown = {};
+        try{ tpBreakdown = JSON.parse(row.TP_BREAKDOWN_JSON || '{}'); }catch(e){}
+        try{ tpCountBreakdown = JSON.parse(row.TP_COUNT_BREAKDOWN_JSON || '{}'); }catch(e){}
         const exists = historyData.some(h => h.timestamp === row.TIMESTAMP);
         if(!exists){
-          historyData.push({
+          const snap = {
             timestamp: row.TIMESTAMP,
             file: row.ARQUIVO || '-',
             count: parseInt(row.QTD_PNR) || 0,
             total: parsedTotal,
             avg: parsedAvg,
             max: parsedMax,
-            topTp: row.TRANSPORTADORA_LIDER || '-'
-          });
+            topTp: row.TRANSPORTADORA_LIDER || '-',
+            tpBreakdown: tpBreakdown,
+            tpCountBreakdown: tpCountBreakdown
+          };
+          historyData.push(snap);
+          saveSnapshotToCloud(snap);
           added++;
         }
       });
