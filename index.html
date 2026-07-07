@@ -109,6 +109,17 @@
     color:#00A650;
     white-space:nowrap;
   }
+  .cloud-retry-btn{
+    background:none;
+    border:none;
+    color:var(--ml-blue);
+    font-size:11px;
+    font-weight:700;
+    cursor:pointer;
+    text-decoration:underline;
+    padding:0;
+    margin-left:4px;
+  }
 
   @media print{
     .no-print{ display:none !important; }
@@ -780,16 +791,23 @@ const emptyState = document.getElementById('emptyState');
 const dashboard = document.getElementById('dashboard');
 
 /* ---------------- FIREBASE (Realtime Database via REST) ---------------- */
-function setCloudStatus(msg, isError){
+function setCloudStatus(msg, isError, retryCallStr){
   const el = document.getElementById('cloudStatus');
   if(!el) return;
-  el.textContent = msg;
   el.style.color = isError ? '#E5352B' : '#00A650';
+  if(isError && retryCallStr){
+    el.innerHTML = escapeHtml(msg) + ' <button type="button" class="cloud-retry-btn" onclick="' + retryCallStr + '">🔄 tentar novamente</button>';
+  } else {
+    el.textContent = msg;
+  }
 }
 
 async function fbGet(path){
   const res = await fetch(`${FIREBASE_BASE}/${path}.json`);
-  if(!res.ok) throw new Error('GET ' + path + ' falhou (' + res.status + ')');
+  if(!res.ok){
+    const bodyText = await res.text().catch(()=> '');
+    throw new Error('GET ' + path + ' falhou (' + res.status + ') ' + bodyText);
+  }
   return res.json();
 }
 async function fbPut(path, data){
@@ -798,7 +816,10 @@ async function fbPut(path, data){
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(data)
   });
-  if(!res.ok) throw new Error('PUT ' + path + ' falhou (' + res.status + ')');
+  if(!res.ok){
+    const bodyText = await res.text().catch(()=> '');
+    throw new Error('PUT ' + path + ' falhou (' + res.status + ') ' + bodyText);
+  }
   return res.json();
 }
 async function fbPost(path, data){
@@ -807,12 +828,18 @@ async function fbPost(path, data){
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(data)
   });
-  if(!res.ok) throw new Error('POST ' + path + ' falhou (' + res.status + ')');
+  if(!res.ok){
+    const bodyText = await res.text().catch(()=> '');
+    throw new Error('POST ' + path + ' falhou (' + res.status + ') ' + bodyText);
+  }
   return res.json();
 }
 async function fbDelete(path){
   const res = await fetch(`${FIREBASE_BASE}/${path}.json`, {method:'DELETE'});
-  if(!res.ok) throw new Error('DELETE ' + path + ' falhou (' + res.status + ')');
+  if(!res.ok){
+    const bodyText = await res.text().catch(()=> '');
+    throw new Error('DELETE ' + path + ' falhou (' + res.status + ') ' + bodyText);
+  }
   return res.json();
 }
 
@@ -841,19 +868,50 @@ async function deleteSnapshotFromCloud(fbKey){
   }
 }
 
-async function savePainelToCloud(fileName, facilityAvailable){
+/* O Firebase Realtime Database não permite os caracteres . $ # [ ] / em nomes de
+   campos. Como nossa coluna de valor se chama "R$", ela precisa ser renomeada
+   antes de enviar/receber da nuvem. */
+function toFirebaseRow(r){
+  return {
+    SVC: r.SVC,
+    ROUTE_ID: r.ROUTE_ID,
+    ID: r.ID,
+    DATA_REC: r.DATA_REC,
+    DATA_ENT: r.DATA_ENT,
+    DESC: r.DESC,
+    VALOR: r['R$'],
+    TP: r.TP,
+    FACILITY: r.FACILITY
+  };
+}
+function fromFirebaseRow(r){
+  return {
+    SVC: r.SVC || '',
+    ROUTE_ID: r.ROUTE_ID || '',
+    ID: r.ID || '',
+    DATA_REC: r.DATA_REC || '',
+    DATA_ENT: r.DATA_ENT || '',
+    DESC: r.DESC || '',
+    'R$': Number(r.VALOR) || 0,
+    TP: r.TP || '',
+    FACILITY: r.FACILITY || ''
+  };
+}
+
+async function savePainelToCloud(fileName){
   try{
     setCloudStatus('☁️ Salvando painel na nuvem...', false);
-    await fbPut('painel/rows', rawData);
+    const safeRows = rawData.map(toFirebaseRow);
+    await fbPut('painel/rows', safeRows);
     await fbPut('painel/meta', {
-      fileName: fileName || '',
+      fileName: fileName || currentFileName || '',
       updatedAt: new Date().toISOString(),
       count: rawData.length
     });
-    setCloudStatus('☁️ Painel salvo na nuvem', false);
+    setCloudStatus('☁️ Painel sincronizado com a nuvem', false);
   } catch(err){
     console.error(err);
-    setCloudStatus('⚠️ Falha ao salvar painel na nuvem', true);
+    setCloudStatus('⚠️ Falha ao salvar painel na nuvem', true, 'savePainelToCloud()');
   }
 }
 
@@ -880,7 +938,7 @@ async function loadCloudDataOnStart(){
     const remoteRows = await fbGet('painel/rows');
     const remoteMeta = await fbGet('painel/meta');
     if(remoteRows && Array.isArray(remoteRows) && remoteRows.length > 0 && rawData.length === 0){
-      rawData = remoteRows;
+      rawData = remoteRows.filter(Boolean).map(fromFirebaseRow);
       currentFileName = (remoteMeta && remoteMeta.fileName) || '';
       if(currentFileName) fileNameEl.textContent = currentFileName + ' (nuvem)';
       emptyState.style.display = 'none';
