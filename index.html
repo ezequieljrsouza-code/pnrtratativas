@@ -301,6 +301,93 @@
     outline:2px solid var(--ml-blue);
     outline-offset:1px;
   }
+
+  /* ---------- MULTI-SELECT ---------- */
+  .ms-control{
+    position:relative;
+  }
+  .ms-toggle{
+    padding:9px 12px;
+    border:1px solid var(--ml-gray-border);
+    border-radius:6px;
+    font-size:13px;
+    min-width:160px;
+    background:var(--white);
+    color:var(--ml-dark);
+    text-align:left;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    font-weight:600;
+  }
+  .ms-toggle:hover{border-color:var(--ml-blue);}
+  .ms-toggle.has-selection{
+    border-color:var(--ml-blue);
+    background:#F0F6FF;
+    color:var(--ml-blue-dark);
+  }
+  .ms-arrow{font-size:10px;opacity:.6;}
+  .ms-panel{
+    display:none;
+    position:absolute;
+    top:calc(100% + 6px);
+    left:0;
+    z-index:100;
+    background:var(--white);
+    border:1px solid var(--ml-gray-border);
+    border-radius:8px;
+    box-shadow:0 4px 16px rgba(0,0,0,.15);
+    min-width:230px;
+    max-height:280px;
+    overflow-y:auto;
+    padding:8px 0;
+  }
+  .ms-panel.open{display:block;}
+  .ms-panel-actions{
+    display:flex;
+    justify-content:space-between;
+    padding:4px 12px 8px;
+    border-bottom:1px solid var(--ml-gray-border);
+    margin-bottom:4px;
+  }
+  .ms-panel-actions button{
+    background:none;
+    border:none;
+    color:var(--ml-blue);
+    font-size:11.5px;
+    font-weight:700;
+    cursor:pointer;
+    padding:2px 4px;
+  }
+  .ms-panel-actions button:hover{text-decoration:underline;}
+  .ms-option{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:7px 14px;
+    font-size:13px;
+    color:var(--ml-dark);
+    cursor:pointer;
+  }
+  .ms-option:hover{background:#FFF9DB;}
+  .ms-option input[type=checkbox]{
+    width:15px;height:15px;
+    accent-color:var(--ml-blue);
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .ms-option span.opt-label{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .ms-empty{
+    padding:10px 14px;
+    font-size:12.5px;
+    color:#999;
+  }
   .clear-btn{
     background:none;
     border:1px solid var(--ml-gray-border);
@@ -549,26 +636,25 @@
         <label>Buscar</label>
         <input type="text" id="searchInput" placeholder="ID, rota ou descrição...">
       </div>
-      <div class="control-group">
+      <div class="control-group ms-control">
         <label>Transportadora (TP)</label>
-        <select id="filterTp"><option value="">Todas</option></select>
+        <button type="button" class="ms-toggle" id="msToggle_tp" onclick="toggleMsPanel('tp')">Todas <span class="ms-arrow">▾</span></button>
+        <div class="ms-panel" id="msPanel_tp"></div>
       </div>
-      <div class="control-group">
+      <div class="control-group ms-control">
         <label>SVC</label>
-        <select id="filterSvc"><option value="">Todos</option></select>
+        <button type="button" class="ms-toggle" id="msToggle_svc" onclick="toggleMsPanel('svc')">Todos <span class="ms-arrow">▾</span></button>
+        <div class="ms-panel" id="msPanel_svc"></div>
       </div>
-      <div class="control-group">
+      <div class="control-group ms-control">
         <label>Facility</label>
-        <select id="filterFacility"><option value="">Todos</option></select>
+        <button type="button" class="ms-toggle" id="msToggle_facility" onclick="toggleMsPanel('facility')">Todos <span class="ms-arrow">▾</span></button>
+        <div class="ms-panel" id="msPanel_facility"></div>
       </div>
-      <div class="control-group">
+      <div class="control-group ms-control">
         <label>Prioridade</label>
-        <select id="filterPriority">
-          <option value="">Todas</option>
-          <option value="critical">&#128308; Crítica (top 10%)</option>
-          <option value="high">&#128992; Alta (top 30%)</option>
-          <option value="normal">&#128993; Normal</option>
-        </select>
+        <button type="button" class="ms-toggle" id="msToggle_priority" onclick="toggleMsPanel('priority')">Todas <span class="ms-arrow">▾</span></button>
+        <div class="ms-panel" id="msPanel_priority"></div>
       </div>
       <button class="clear-btn" onclick="clearFilters()">Limpar filtros</button>
       <div class="legend">
@@ -675,6 +761,18 @@ let historyChartInstance = null;
 let historyTpChartInstance = null;
 let currentTab = 'painel';
 let currentFileName = '';
+
+const filterState = {
+  tp: new Set(),
+  svc: new Set(),
+  facility: new Set(),
+  priority: new Set()
+};
+const PRIORITY_OPTIONS = [
+  {value:'critical', label:'🔴 Crítica (top 10%)'},
+  {value:'high', label:'🟠 Alta (top 30%)'},
+  {value:'normal', label:'🟡 Normal'}
+];
 
 const fileInput = document.getElementById('fileInput');
 const fileNameEl = document.getElementById('fileName');
@@ -926,14 +1024,108 @@ function populateFilters(){
   const svcSet = Array.from(new Set(rawData.map(r=>r.SVC))).filter(Boolean).sort();
   const facSet = Array.from(new Set(rawData.map(r=>r.FACILITY))).filter(Boolean).sort();
 
-  const tpSelect = document.getElementById('filterTp');
-  tpSelect.innerHTML = '<option value="">Todas</option>' + tpSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  // limpa seleções que não existem mais nos novos dados
+  filterState.tp = new Set(Array.from(filterState.tp).filter(v => tpSet.includes(v)));
+  filterState.svc = new Set(Array.from(filterState.svc).filter(v => svcSet.includes(v)));
+  filterState.facility = new Set(Array.from(filterState.facility).filter(v => facSet.includes(v)));
 
-  const svcSelect = document.getElementById('filterSvc');
-  svcSelect.innerHTML = '<option value="">Todos</option>' + svcSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  buildMsPanel('tp', tpSet.map(v=>({value:v, label:v})));
+  buildMsPanel('svc', svcSet.map(v=>({value:v, label:v})));
+  buildMsPanel('facility', facSet.map(v=>({value:v, label:v})));
+  buildMsPanel('priority', PRIORITY_OPTIONS);
 
-  const facSelect = document.getElementById('filterFacility');
-  facSelect.innerHTML = '<option value="">Todos</option>' + facSet.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  updateMsToggleLabel('tp', 'Todas');
+  updateMsToggleLabel('svc', 'Todos');
+  updateMsToggleLabel('facility', 'Todos');
+  updateMsToggleLabel('priority', 'Todas');
+}
+
+/* ---------------- MULTI-SELECT COMPONENT ---------------- */
+function buildMsPanel(key, options){
+  const panel = document.getElementById('msPanel_' + key);
+  if(!panel) return;
+
+  if(options.length === 0){
+    panel.innerHTML = '<div class="ms-empty">Nenhuma opção disponível</div>';
+    return;
+  }
+
+  const actions = `<div class="ms-panel-actions">
+      <button type="button" onclick="msSelectAll('${key}')">Selecionar todos</button>
+      <button type="button" onclick="msClear('${key}')">Limpar</button>
+    </div>`;
+
+  const optionsHtml = options.map(function(opt){
+    const checked = filterState[key].has(opt.value) ? 'checked' : '';
+    const safeVal = escapeHtml(opt.value).replace(/"/g,'&quot;');
+    return `<label class="ms-option">
+      <input type="checkbox" value="${safeVal}" ${checked} onchange="msToggleOption('${key}', this.value, this.checked)">
+      <span class="opt-label">${escapeHtml(opt.label)}</span>
+    </label>`;
+  }).join('');
+
+  panel.innerHTML = actions + optionsHtml;
+}
+
+function toggleMsPanel(key){
+  const panel = document.getElementById('msPanel_' + key);
+  const isOpen = panel.classList.contains('open');
+  document.querySelectorAll('.ms-panel').forEach(p => p.classList.remove('open'));
+  if(!isOpen){
+    panel.classList.add('open');
+  }
+}
+
+document.addEventListener('click', function(e){
+  if(!e.target.closest('.ms-control')){
+    document.querySelectorAll('.ms-panel').forEach(p => p.classList.remove('open'));
+  }
+});
+
+function msToggleOption(key, value, checked){
+  if(checked){
+    filterState[key].add(value);
+  } else {
+    filterState[key].delete(value);
+  }
+  updateMsToggleLabel(key, key === 'tp' ? 'Todas' : (key === 'priority' ? 'Todas' : 'Todos'));
+  applyFilters();
+}
+
+function msSelectAll(key){
+  const panel = document.getElementById('msPanel_' + key);
+  panel.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+    cb.checked = true;
+    filterState[key].add(cb.value);
+  });
+  updateMsToggleLabel(key, key === 'tp' ? 'Todas' : (key === 'priority' ? 'Todas' : 'Todos'));
+  applyFilters();
+}
+
+function msClear(key){
+  const panel = document.getElementById('msPanel_' + key);
+  panel.querySelectorAll('input[type=checkbox]').forEach(function(cb){ cb.checked = false; });
+  filterState[key].clear();
+  updateMsToggleLabel(key, key === 'tp' ? 'Todas' : (key === 'priority' ? 'Todas' : 'Todos'));
+  applyFilters();
+}
+
+function updateMsToggleLabel(key, allLabel){
+  const btn = document.getElementById('msToggle_' + key);
+  if(!btn) return;
+  const n = filterState[key].size;
+  let text;
+  if(n === 0){
+    text = allLabel;
+    btn.classList.remove('has-selection');
+  } else if(n === 1){
+    text = Array.from(filterState[key])[0];
+    btn.classList.add('has-selection');
+  } else {
+    text = n + ' selecionadas';
+    btn.classList.add('has-selection');
+  }
+  btn.innerHTML = escapeHtml(text) + ' <span class="ms-arrow">▾</span>';
 }
 
 function getThresholds(){
@@ -962,17 +1154,13 @@ function formatBRL(v){
 
 function applyFilters(){
   const search = document.getElementById('searchInput').value.toLowerCase().trim();
-  const tp = document.getElementById('filterTp').value;
-  const svc = document.getElementById('filterSvc').value;
-  const facility = document.getElementById('filterFacility').value;
-  const priority = document.getElementById('filterPriority').value;
   const th = getThresholds();
 
   filteredData = rawData.filter(function(r){
-    if(tp && r.TP !== tp) return false;
-    if(svc && r.SVC !== svc) return false;
-    if(facility && r.FACILITY !== facility) return false;
-    if(priority && priorityOf(r['R$'], th) !== priority) return false;
+    if(filterState.tp.size && !filterState.tp.has(r.TP)) return false;
+    if(filterState.svc.size && !filterState.svc.has(r.SVC)) return false;
+    if(filterState.facility.size && !filterState.facility.has(r.FACILITY)) return false;
+    if(filterState.priority.size && !filterState.priority.has(priorityOf(r['R$'], th))) return false;
     if(search){
       const hay = (r.ID + ' ' + r.ROUTE_ID + ' ' + r.DESC + ' ' + r.TP + ' ' + r.FACILITY).toLowerCase();
       if(hay.indexOf(search) === -1) return false;
@@ -981,7 +1169,7 @@ function applyFilters(){
   });
 
   sortData();
-  renderCards(th, tp);
+  renderCards(th, Array.from(filterState.tp));
   renderTable(th);
 }
 
@@ -1023,12 +1211,16 @@ function renderCards(th, activeTp){
     countTp[r.TP] = (countTp[r.TP]||0) + 1;
   });
 
-  if(activeTp){
+  if(activeTp && activeTp.length === 1){
     cardTopTpLabelEl.textContent = 'Transportadora (filtro)';
-    document.getElementById('cardTopTp').textContent = activeTp;
-    const val = byTp[activeTp] || 0;
-    const cnt = countTp[activeTp] || 0;
+    document.getElementById('cardTopTp').textContent = activeTp[0];
+    const val = byTp[activeTp[0]] || 0;
+    const cnt = countTp[activeTp[0]] || 0;
     document.getElementById('cardTopTpHint').textContent = formatBRL(val) + ' em ' + cnt + ' ocorrência' + (cnt===1?'':'s');
+  } else if(activeTp && activeTp.length > 1){
+    cardTopTpLabelEl.textContent = 'Transportadoras (filtro)';
+    document.getElementById('cardTopTp').textContent = activeTp.length + ' selecionadas';
+    document.getElementById('cardTopTpHint').textContent = activeTp.join(', ');
   } else {
     cardTopTpLabelEl.textContent = 'Transportadora Crítica';
     let topTp = null, topVal = -1;
@@ -1090,10 +1282,15 @@ function renderTable(th){
 
 function clearFilters(){
   document.getElementById('searchInput').value = '';
-  document.getElementById('filterTp').value = '';
-  document.getElementById('filterSvc').value = '';
-  document.getElementById('filterFacility').value = '';
-  document.getElementById('filterPriority').value = '';
+  filterState.tp.clear();
+  filterState.svc.clear();
+  filterState.facility.clear();
+  filterState.priority.clear();
+  document.querySelectorAll('.ms-panel input[type=checkbox]').forEach(cb => cb.checked = false);
+  updateMsToggleLabel('tp', 'Todas');
+  updateMsToggleLabel('svc', 'Todos');
+  updateMsToggleLabel('facility', 'Todos');
+  updateMsToggleLabel('priority', 'Todas');
   applyFilters();
 }
 
@@ -1125,13 +1322,18 @@ function downloadFilteredCsv(){
   const now = new Date();
   const stamp = now.toISOString().slice(0,10);
 
-  const tpFilter = document.getElementById('filterTp').value;
-  const tpSlug = tpFilter
-    ? '_' + tpFilter.trim().toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-    : '';
+  const tpSelected = Array.from(filterState.tp);
+  const slugify = s => s.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  let tpSlug = '';
+  if(tpSelected.length === 1){
+    tpSlug = '_' + slugify(tpSelected[0]);
+  } else if(tpSelected.length > 1){
+    tpSlug = '_' + tpSelected.map(slugify).join('_e_');
+  }
 
   const a = document.createElement('a');
   a.href = url;
@@ -1145,10 +1347,6 @@ function downloadFilteredCsv(){
 document.getElementById('downloadBtn').addEventListener('click', downloadFilteredCsv);
 
 document.getElementById('searchInput').addEventListener('input', applyFilters);
-document.getElementById('filterTp').addEventListener('change', applyFilters);
-document.getElementById('filterSvc').addEventListener('change', applyFilters);
-document.getElementById('filterFacility').addEventListener('change', applyFilters);
-document.getElementById('filterPriority').addEventListener('change', applyFilters);
 
 document.querySelectorAll('thead th').forEach(function(th){
   th.addEventListener('click', function(){
